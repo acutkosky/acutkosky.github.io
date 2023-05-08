@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mattermost_install_journey</title>
+  <link rel="stylesheet" href="https://stackedit.io/style.css" />
+</head>
+
+<body class="stackedit">
+  <div class="stackedit__html"><h1 id="migrating-the-lab-slack-to-self-hosted-mattermost-on-aws">Migrating the Lab Slack to self-hosted Mattermost on AWS</h1>
+<h2 id="motivation-im-cheap-and-dont-want-to-pay-for-slack">Motivation: I’m cheap and don’t want to pay for Slack</h2>
+<p>I have to pay if I don’t want the messages in the lab slack to be occasionally deleted. This is not a new problem (so probably we’d have had to do this eventually anyway), but recently slack changed the free tier policy so that the deletion window is extremely quick. The pricing to avoid this is <em>per user</em>, which seems to actively disincentivize growth. If we were running a normal company, then adding more users is presumably coupled with increasing revenue, and we’d probably want to kick ex-members out of the slack quickly, so this would possibly be OK. For a research lab, more people does not equal more money coming in and there is basically zero reason to ever kick anyone out of the slack, so this doesn’t make any sense.</p>
+<p>So we need an alternative.</p>
+<h2 id="choosing-the-provider">Choosing the Provider</h2>
+<p>There are alternatives like Zulip or Discord that have some kind of free plan. After trying them out I felt that all of these were not really as good as slack (although I did like that Zulip had native latex support. That was very tempting). Moreover, in many cases the free plan would also delete data eventually, so since we are already going to the hassle of migrating, we might as well invest in a no-data-deletion plan for as cheap as possible right now.</p>
+<p>Presumably the cheapest option is to self-host an open-source alternative. I picked <a href="https://mattermost.com/">mattermost</a> for this since it “looked” similar to Slack.</p>
+<p>Next, we need some webhosting. We’re going to use AWS.</p>
+<h2 id="pricing-on-aws">Pricing on AWS</h2>
+<p>We are going to follow this guide to setup our mattermost server: <a href="https://docs.mattermost.com/install/installing-mattermost-omnibus.html">https://docs.mattermost.com/install/installing-mattermost-omnibus.html</a></p>
+<p>It suggests that we need 1 vCPU and and 2GB of RAM. Looking at <a href="https://aws.amazon.com/ec2/instance-types/t2/">https://aws.amazon.com/ec2/instance-types/t2/</a>, this seems to suggest a t2.small. At $0.023/hr, this comes up to around $200/year. Adding on 50GB of EBS storage at $0.08/GB/month (<a href="https://aws.amazon.com/ebs/pricing/">https://aws.amazon.com/ebs/pricing/</a>) roughly an extra $50.</p>
+<p>In comparison, paid slack with $7.25/person/month would only support 2 people for this price.</p>
+<p>Of course, I somewhat expect amazon to charge us a bit more for random stuff like network traffic or a static IP or something else I haven’t thought of yet. The pricing is basically impossible to interpret easily. In contrast, DigitalOcean will give us a very clear $12/month for 50GB of storage, 1CPU, 2GB or RAM and what seems like a lot of network traffic for a total of $144/year. I’ve used DigitalOcean before and it’s really easy. Ordinarily I would probably use it. However, we currently have $100,000 AWS credits just sitting around from an AWS research award, so even if AWS goes up to $500/year, we can budget 5% of this award and run a mattermost instance for the next 10 years for “free”.</p>
+<h2 id="installation">Installation</h2>
+<p>Again, we are using this guide: We are going to follow this guide: <a href="https://docs.mattermost.com/install/installing-mattermost-omnibus.html">https://docs.mattermost.com/install/installing-mattermost-omnibus.html</a></p>
+<h3 id="step-1-launch-the-instance-on-ec2">Step 1: launch the instance on EC2</h3>
+<p>In the AWS console, I launched a t2.small instance with 50GB of storage. The OS was Ubuntu,  and I enabled both HTTP and HTTPS traffic (probably didn’t need the HTTP) in  addition to SSH access from all ip addresses. I created a new keypair <code>mattermost</code> for the instance, which provided my a local <code>mattermost.pem</code> file.</p>
+<p>I moved this file from <code>~/downloads</code> into a more appropriate directory on my computer and ran:</p>
+<pre class=" language-bash"><code class="prism  language-bash"><span class="token function">chmod</span> 400 mattermost.pem
+ssh-add mattermost.pem
+</code></pre>
+<p>Then in the AWS console, I went to the “instances” page, clicked on the new instance, and after clicking around a bit I found a “connect to instance” link, which provided me with an option to use some special “EC instance connect” option which I think is probably an in-browser ssh client. However, there was also a “ssh client” tab, so I went there and it provided a user and hostname to ssh into.</p>
+<p>So I ran <code>ssh ubuntu@ec2-54-174-17-155.compute-1.amazonaws.com</code> and I was in! I copied over my regular public key from my local <code>~/.ssh/id_rsa.pub</code> into the servers <code>~/.ssh/authorized_keys</code> (just paste the contents of the local public key file in as a new line in <code>authorized_keys</code> using some text editor like <code>vim</code>) so that I would be able to ssh in using my standard laptop credentials even if I lost track where the <code>mattermost.pem</code> file is (and, let’s be honest, that will inevitably happen).</p>
+<h3 id="step-2-start-following-the-guide.">Step 2: start following the guide.</h3>
+<p>The first instruction on the guide was:</p>
+<p><code>curl -o- https://deb.packages.mattermost.com/repo-setup.sh | sudo bash</code></p>
+<p>So let’s try it out:</p>
+<pre class=" language-bash"><code class="prism  language-bash">ubuntu@ip-172-31-28-0:~$ curl -o- https://deb.packages.mattermost.com/repo-setup.sh <span class="token operator">|</span> <span class="token function">sudo</span> <span class="token function">bash</span>
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  6078  100  6078    0     0  35431      0 --:--:-- --:--:-- --:--:-- 35337
+Adding component<span class="token punctuation">(</span>s<span class="token punctuation">)</span> <span class="token string">'universe'</span> to all repositories.
+Hit:1 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy InRelease
+Get:2 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates InRelease <span class="token punctuation">[</span>119 kB<span class="token punctuation">]</span>
+Get:3 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports InRelease <span class="token punctuation">[</span>108 kB<span class="token punctuation">]</span>
+Get:4 http://security.ubuntu.com/ubuntu jammy-security InRelease <span class="token punctuation">[</span>110 kB<span class="token punctuation">]</span>
+Get:5 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/universe amd64 Packages <span class="token punctuation">[</span>14.1 MB<span class="token punctuation">]</span>
+Get:6 http://apt.postgresql.org/pub/repos/apt jammy-pgdg InRelease <span class="token punctuation">[</span>116 kB<span class="token punctuation">]</span>
+Get:7 http://nginx.org/packages/ubuntu jammy InRelease <span class="token punctuation">[</span>3587 B<span class="token punctuation">]</span>
+Get:8 http://nginx.org/packages/ubuntu jammy/nginx amd64 Packages <span class="token punctuation">[</span>12.9 kB<span class="token punctuation">]</span>
+Get:9 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/universe Translation-en <span class="token punctuation">[</span>5652 kB<span class="token punctuation">]</span>
+Get:10 http://security.ubuntu.com/ubuntu jammy-security/main amd64 Packages <span class="token punctuation">[</span>804 kB<span class="token punctuation">]</span>
+Get:11 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/universe amd64 c-n-f Metadata <span class="token punctuation">[</span>286 kB<span class="token punctuation">]</span>
+Get:12 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/multiverse amd64 Packages <span class="token punctuation">[</span>217 kB<span class="token punctuation">]</span>
+Get:13 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/multiverse Translation-en <span class="token punctuation">[</span>112 kB<span class="token punctuation">]</span>
+Get:14 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy/multiverse amd64 c-n-f Metadata <span class="token punctuation">[</span>8372 B<span class="token punctuation">]</span>
+Get:15 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/main amd64 Packages <span class="token punctuation">[</span>1073 kB<span class="token punctuation">]</span>
+Get:16 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/main Translation-en <span class="token punctuation">[</span>222 kB<span class="token punctuation">]</span>
+Get:17 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/main amd64 c-n-f Metadata <span class="token punctuation">[</span>14.3 kB<span class="token punctuation">]</span>
+Get:18 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/restricted amd64 Packages <span class="token punctuation">[</span>881 kB<span class="token punctuation">]</span>
+Get:19 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/restricted Translation-en <span class="token punctuation">[</span>139 kB<span class="token punctuation">]</span>
+Get:20 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/restricted amd64 c-n-f Metadata <span class="token punctuation">[</span>604 B<span class="token punctuation">]</span>
+Get:21 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/universe amd64 Packages <span class="token punctuation">[</span>912 kB<span class="token punctuation">]</span>
+Get:22 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/universe Translation-en <span class="token punctuation">[</span>183 kB<span class="token punctuation">]</span>
+Get:23 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/universe amd64 c-n-f Metadata <span class="token punctuation">[</span>18.7 kB<span class="token punctuation">]</span>
+Get:24 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/multiverse amd64 Packages <span class="token punctuation">[</span>39.0 kB<span class="token punctuation">]</span>
+Get:25 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/multiverse Translation-en <span class="token punctuation">[</span>8736 B<span class="token punctuation">]</span>
+Get:26 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates/multiverse amd64 c-n-f Metadata <span class="token punctuation">[</span>468 B<span class="token punctuation">]</span>
+Get:27 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/main amd64 Packages <span class="token punctuation">[</span>40.9 kB<span class="token punctuation">]</span>
+Get:28 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/main Translation-en <span class="token punctuation">[</span>10.2 kB<span class="token punctuation">]</span>
+Get:29 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/main amd64 c-n-f Metadata <span class="token punctuation">[</span>388 B<span class="token punctuation">]</span>
+Get:30 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/restricted amd64 c-n-f Metadata <span class="token punctuation">[</span>116 B<span class="token punctuation">]</span>
+Get:31 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/universe amd64 Packages <span class="token punctuation">[</span>22.2 kB<span class="token punctuation">]</span>
+Get:32 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/universe Translation-en <span class="token punctuation">[</span>15.0 kB<span class="token punctuation">]</span>
+Get:33 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/universe amd64 c-n-f Metadata <span class="token punctuation">[</span>548 B<span class="token punctuation">]</span>
+Get:34 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports/multiverse amd64 c-n-f Metadata <span class="token punctuation">[</span>116 B<span class="token punctuation">]</span>
+Get:35 http://apt.postgresql.org/pub/repos/apt jammy-pgdg/main amd64 Packages <span class="token punctuation">[</span>261 kB<span class="token punctuation">]</span>
+Get:36 http://security.ubuntu.com/ubuntu jammy-security/main Translation-en <span class="token punctuation">[</span>156 kB<span class="token punctuation">]</span>
+Get:37 http://security.ubuntu.com/ubuntu jammy-security/main amd64 c-n-f Metadata <span class="token punctuation">[</span>9144 B<span class="token punctuation">]</span>
+Get:38 http://security.ubuntu.com/ubuntu jammy-security/restricted amd64 Packages <span class="token punctuation">[</span>838 kB<span class="token punctuation">]</span>
+Get:39 http://security.ubuntu.com/ubuntu jammy-security/restricted Translation-en <span class="token punctuation">[</span>131 kB<span class="token punctuation">]</span>
+Get:40 http://security.ubuntu.com/ubuntu jammy-security/restricted amd64 c-n-f Metadata <span class="token punctuation">[</span>604 B<span class="token punctuation">]</span>
+Get:41 http://security.ubuntu.com/ubuntu jammy-security/universe amd64 Packages <span class="token punctuation">[</span>729 kB<span class="token punctuation">]</span>
+Get:42 http://security.ubuntu.com/ubuntu jammy-security/universe Translation-en <span class="token punctuation">[</span>121 kB<span class="token punctuation">]</span>
+Get:43 http://security.ubuntu.com/ubuntu jammy-security/universe amd64 c-n-f Metadata <span class="token punctuation">[</span>14.3 kB<span class="token punctuation">]</span>
+Get:44 http://security.ubuntu.com/ubuntu jammy-security/multiverse amd64 Packages <span class="token punctuation">[</span>34.3 kB<span class="token punctuation">]</span>
+Get:45 http://security.ubuntu.com/ubuntu jammy-security/multiverse Translation-en <span class="token punctuation">[</span>6464 B<span class="token punctuation">]</span>
+Get:46 http://security.ubuntu.com/ubuntu jammy-security/multiverse amd64 c-n-f Metadata <span class="token punctuation">[</span>252 B<span class="token punctuation">]</span>
+Fetched 27.5 MB <span class="token keyword">in</span> 5s <span class="token punctuation">(</span>5443 kB/s<span class="token punctuation">)</span>
+Reading package lists<span class="token punctuation">..</span>. Done
+Hit:1 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy InRelease
+Hit:2 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-updates InRelease
+Hit:3 http://us-east-1.ec2.archive.ubuntu.com/ubuntu jammy-backports InRelease
+Get:4 https://deb.packages.mattermost.com jammy InRelease <span class="token punctuation">[</span>3956 B<span class="token punctuation">]</span>
+Hit:5 http://security.ubuntu.com/ubuntu jammy-security InRelease
+Hit:6 http://apt.postgresql.org/pub/repos/apt jammy-pgdg InRelease
+Hit:7 http://nginx.org/packages/ubuntu jammy InRelease
+Get:8 https://deb.packages.mattermost.com jammy/main amd64 Packages <span class="token punctuation">[</span>8711 B<span class="token punctuation">]</span>
+Fetched 12.7 kB <span class="token keyword">in</span> 1s <span class="token punctuation">(</span>13.3 kB/s<span class="token punctuation">)</span>
+Reading package lists<span class="token punctuation">..</span>. Done
+Building dependency tree<span class="token punctuation">..</span>. Done
+Reading state information<span class="token punctuation">..</span>. Done
+40 packages can be upgraded. Run <span class="token string">'apt list --upgradable'</span> to see them.
+</code></pre>
+<p>Seems not too bad…</p>
+<p>At this point I remembered some fancy new terminal app I was trying out a while back called “warp” (<a href="https://www.warp.dev/">https://www.warp.dev/</a>)  that might make it easier to store these input/output things, so I switched over to that and logged in again.</p>
+<p>The previous command ended with some stuff about upgrading, so I decided to run a <code>sudo apt-get upgrade</code>.</p>
+<p>let’s see if this fancy link output sharing functionality of the warp terminal app works:<br>
+<a href="https://app.warp.dev/block/7jOkYtnTzrTVy5ZNIJyDcN">https://app.warp.dev/block/7jOkYtnTzrTVy5ZNIJyDcN</a></p>
+<p>Hmm, it doesn’t seem to make it clear that <code>sudo apt-get upgrade</code> was typed by me and the other lines were output…</p>
+<p>Anyways, onwards!</p>
+<h2 id="step-2-installing-mattermost">Step 2: installing mattermost</h2>
+<p>Next  command in the guide: <code>sudo apt install mattermost-omnibus -y</code></p>
+<p>I am presented with this screen:<br>
+Package configuration</p>
+<pre><code>            ┌───────────────────────────────────┤ Configuring mattermost-omnibus ├────────────────────────────────────┐
+            │ Enter the fully qualified domain name for this Mattermost installation. (E.g.: mattermost.example.com)  │
+            │                                                                                                         │
+            │ Mattermost domain name                                                                                  │
+            │                                                                                                         │
+            │ _______________________________________________________________________________________________________ │
+            │                                                                                                         │
+            │                                                 &lt;Ok&gt;                                                    │
+            │                                                                                                         │
+            └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>oops… I forgot about the domain name.</p>
+<p>I already own “<a href="http://mirrordescent.com">mirrordescent.com</a>” and I haven’t used it for anything yet, so I guess “<a href="http://mirrordescent.com">mirrordescent.com</a>” is going to be the new lab domain. Let’s use “<a href="http://chat.mirrordescent.com">chat.mirrordescent.com</a>” for the mattermost instance.</p>
+<p>Here we have our first snafu!</p>
+<h2 id="problem-1">Problem 1</h2>
+<p>I made a mistake typing the domain name, and hit “ESC” rather than something more intelligent like backspace.</p>
+<p>It immediately moved on to ask me about my email address! I didn’t want that! In a panic, I figured it was time to abort. ctrl-C did nothing! I hit ESC again and got back to a terminal where stuff was being installed. So I hit ctrl-C. Still nothing!</p>
+<p>Ok eventually I hit enter on some other dialogue about restarting services and got back to the tail of my output:</p>
+<pre class=" language-bash"><code class="prism  language-bash"><span class="token punctuation">)</span> <span class="token keyword">in</span> auto mode
+Setting up python3-winrm <span class="token punctuation">(</span>0.3.0-2<span class="token punctuation">)</span> <span class="token punctuation">..</span>.
+Setting up ansible <span class="token punctuation">(</span>2.10.7+merged+base+2.10.8+dfsg-1<span class="token punctuation">)</span> <span class="token punctuation">..</span>.<span class="token comment">#########################################################################......]</span>
+Progress: <span class="token punctuation">[</span> 96%<span class="token punctuation">]</span> <span class="token punctuation">[</span><span class="token comment">#################################################################################################################.....]</span>
+
+
+Setting up python3-certbot-nginx <span class="token punctuation">(</span>1.21.0-1<span class="token punctuation">)</span> <span class="token punctuation">..</span>.
+Setting up mattermost-omnibus <span class="token punctuation">(</span>7.10.0-0<span class="token punctuation">)</span> <span class="token punctuation">..</span>.<span class="token comment">#########################################################################################...]</span>
+config <span class="token function">file</span> <span class="token string">"/etc/mattermost/mmomni.yml"</span> successfully saved<span class="token comment">###########################################################################..]</span>
+ERROR: error reading config at <span class="token string">"/etc/mattermost/mmomni.yml"</span><span class="token keyword">:</span> fqdn and email must be <span class="token keyword">set</span> <span class="token keyword">if</span> https is enabled
+
+
+<span class="token comment">###############################################################</span>
+<span class="token comment"># Omnibus configuration failed.                               #</span>
+<span class="token comment">#                                                             #</span>
+<span class="token comment"># Please run "dpkg-reconfigure mattermost-omnibus" to         #</span>
+<span class="token comment"># try again or join the Mattermost Community for help at      #</span>
+<span class="token comment"># https://mattermost.com/pl/default-ask-mattermost-community/ #</span>
+<span class="token comment">###############################################################</span>
+</code></pre>
+<p><a href="https://app.warp.dev/block/o9S0WlMMdZbQnTaFHolQlc">https://app.warp.dev/block/o9S0WlMMdZbQnTaFHolQlc</a></p>
+<p>ok, so it failed with some 96% progress… that was kind of what I wanted I guess. Maybe I can just try it again? (Note from the future: yes, I should have probably just noticed the <code>Please run "dpkg-reconfigure mattermost-omnibus" try again</code> up there, but I was not thinking too clearly).</p>
+<pre><code>sudo apt install mattermost-omnibus -y
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+mattermost-omnibus is already the newest version (7.10.0-0).
+0 upgraded, 0 newly installed, 0 to remove and 3 not upgraded.
+</code></pre>
+<p>uh oh. Next let’s try <code>sudo apt install --reinstall mattermost-omnibus -y</code>. Nope, same output:<br>
+<a href="https://app.warp.dev/block/n3TpefKB4PENicoVZXSxR6">https://app.warp.dev/block/n3TpefKB4PENicoVZXSxR6</a></p>
+<p>Ok, let’s try to uninstall it. The guide has a handy command at the bottom for “completely removing” mattermost:<br>
+<code>sudo apt remove --purge mattermost mattermost-omnibus</code></p>
+<p>Let’s see…</p>
+<pre><code>sudo apt remove --purge mattermost mattermost-omnibus
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following packages were automatically installed and are no longer required:
+  ansible certbot ieee-data nginx python3-acme python3-argcomplete python3-certbot python3-certbot-nginx python3-configargparse
+  python3-dnspython python3-icu python3-jmespath python3-josepy python3-kerberos python3-libcloud python3-lockfile python3-netaddr
+  python3-ntlm-auth python3-packaging python3-parsedatetime python3-psycopg2 python3-pycryptodome python3-requests-kerberos
+  python3-requests-ntlm python3-requests-toolbelt python3-rfc3339 python3-selinux python3-simplejson python3-winrm python3-xmltodict
+  python3-zope.component python3-zope.event python3-zope.hookable
+Use 'sudo apt autoremove' to remove them.
+The following packages will be REMOVED:
+  mattermost* mattermost-omnibus*
+0 upgraded, 0 newly installed, 2 to remove and 3 not upgraded.
+After this operation, 0 B of additional disk space will be used.
+Do you want to continue? [Y/n] Y
+(Reading database ... 108873 files and directories currently installed.)
+Removing mattermost-omnibus (7.10.0-0) ...
+Removing mattermost (7.10.0-0) ...
+(Reading database ... 104707 files and directories currently installed.)
+Purging configuration files for mattermost-omnibus (7.10.0-0) ...
+userdel: user 'mattermost' does not exist
+Couldn't delete user mattermost
+groupdel: group 'mattermost' does not exist
+Couldn't delete group mattermost
+dpkg: warning: while removing mattermost-omnibus, directory '/usr/local' not empty so not removed
+Purging configuration files for mattermost (7.10.0-0) ...
+</code></pre>
+<p>Ok, seems to have maybe worked. Let’s try <code>sudo apt install mattermost-omnibus -y</code> again, and this time type the answers correctly. I entered “<a href="http://chat.mirrordescent.com">chat.mirrordescent.com</a>” for the domain and <a href="mailto:%22cutkosky@bu.edu">"cutkosky@bu.edu</a>" for the contact mail with confidence, and hit enter. So far so good!</p>
+<h2 id="back-on-track">Back on Track?</h2>
+<p>Now, I got a dialog about services that may need to be restarted…</p>
+<pre><code>                                          ┌────┤ Daemons using outdated libraries ├─────┐
+                                          │                                             │
+                                          │                                             │
+                                          │ Which services should be restarted?         │
+                                          │                                             │
+                                          │    [ ] dbus.service                         │
+                                          │    [ ] networkd-dispatcher.service          │
+                                          │    [ ] systemd-logind.service               │
+                                          │    [ ] unattended-upgrades.service          │
+                                          │    [ ] user@1000.service                    │
+                                          │                                             │
+                                          │                                             │
+                                          │          &lt;Ok&gt;              &lt;Cancel&gt;         │
+                                          │                                             │
+                                          └─────────────────────────────────────────────┘
+</code></pre>
+<p>I could not figure out how to actually interact with this dialog box… so I just hit enter. Maybe I can restart things later if needed (I guess worst-case we can probably just reboot the instance)</p>
+<p>Full output link here:<br>
+<a href="https://app.warp.dev/block/gZbwrBXT3fncvJSRIGjloB">https://app.warp.dev/block/gZbwrBXT3fncvJSRIGjloB</a></p>
+<p>Looks like there was an issue related to setting up the SSL certificate:</p>
+<pre class=" language-bash"><code class="prism  language-bash">TASK <span class="token punctuation">[</span>Generate SSL Certificate<span class="token punctuation">]</span> ************************************************************************************************************
+fatal: <span class="token punctuation">[</span>localhost<span class="token punctuation">]</span>: FAILED<span class="token operator">!</span> <span class="token operator">=</span><span class="token operator">&gt;</span> <span class="token punctuation">{</span><span class="token string">"changed"</span><span class="token keyword">:</span> true, <span class="token string">"cmd"</span><span class="token keyword">:</span> <span class="token punctuation">[</span><span class="token string">"certbot"</span>, <span class="token string">"certonly"</span>, <span class="token string">"--nginx"</span>, <span class="token string">"-d"</span>, <span class="token string">"chat.mirrordescent.com"</span>, <span class="token string">"-n"</span>, <span class="token string">"--agree-tos"</span>, <span class="token string">"--email"</span>, <span class="token string">"cutkosky@bu.edu"</span><span class="token punctuation">]</span>, <span class="token string">"delta"</span><span class="token keyword">:</span> <span class="token string">"0:00:07.177963"</span>, <span class="token string">"end"</span><span class="token keyword">:</span> <span class="token string">"2023-05-07 19:51:48.508464"</span>, <span class="token string">"msg"</span><span class="token keyword">:</span> <span class="token string">"non-zero return code"</span>, <span class="token string">"rc"</span><span class="token keyword">:</span> 1, <span class="token string">"start"</span><span class="token keyword">:</span> <span class="token string">"2023-05-07 19:51:41.330501"</span>, <span class="token string">"stderr"</span><span class="token keyword">:</span> <span class="token string">"Saving debug log to /var/log/letsencrypt/letsencrypt.log\nSome challenges have failed.\nAsk for help or search for solutions at https://community.letsencrypt.org. See the logfile /var/log/letsencrypt/letsencrypt.log or re-run Certbot with -v for more details."</span>, <span class="token string">"stderr_lines"</span><span class="token keyword">:</span> <span class="token punctuation">[</span><span class="token string">"Saving debug log to /var/log/letsencrypt/letsencrypt.log"</span>, <span class="token string">"Some challenges have failed."</span>, <span class="token string">"Ask for help or search for solutions at https://community.letsencrypt.org. See the logfile /var/log/letsencrypt/letsencrypt.log or re-run Certbot with -v for more details."</span><span class="token punctuation">]</span>, <span class="token string">"stdout"</span><span class="token keyword">:</span> <span class="token string">"Account registered.\nRequesting a certificate for chat.mirrordescent.com\n\nCertbot failed to authenticate some domains (authenticator: nginx). The Certificate Authority reported these problems:\n  Domain: chat.mirrordescent.com\n  Type:   dns\n  Detail: DNS problem: NXDOMAIN looking up A for chat.mirrordescent.com - check that a DNS record exists for this domain; DNS problem: NXDOMAIN looking up AAAA for chat.mirrordescent.com - check that a DNS record exists for this domain\n\nHint: The Certificate Authority failed to verify the temporary nginx configuration changes made by Certbot. Ensure the listed domains point to this nginx server and that it is accessible from the internet."</span>, <span class="token string">"stdout_lines"</span><span class="token keyword">:</span> <span class="token punctuation">[</span><span class="token string">"Account registered."</span>, <span class="token string">"Requesting a certificate for chat.mirrordescent.com"</span>, <span class="token string">""</span>, <span class="token string">"Certbot failed to authenticate some domains (authenticator: nginx). The Certificate Authority reported these problems:"</span>, <span class="token string">"  Domain: chat.mirrordescent.com"</span>, <span class="token string">"  Type:   dns"</span>, <span class="token string">"  Detail: DNS problem: NXDOMAIN looking up A for chat.mirrordescent.com - check that a DNS record exists for this domain; DNS problem: NXDOMAIN looking up AAAA for chat.mirrordescent.com - check that a DNS record exists for this domain"</span>, <span class="token string">""</span>, <span class="token string">"Hint: The Certificate Authority failed to verify the temporary nginx configuration changes made by Certbot. Ensure the listed domains point to this nginx server and that it is accessible from the internet."</span><span class="token punctuation">]</span><span class="token punctuation">}</span>
+</code></pre>
+<p>The problem seems to be that I haven’t actually set up the domain <code>chat.mirrordescent.com</code> to point to this instance. Fair enough, probably we shouldn’t be able to get a certificate for a domain that points somewhere else. So, let’s set up the domain.</p>
+<h2 id="setting-up-the-domain">Setting up the domain</h2>
+<p>After a quick google search, I found this document: <a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-ec2-instance.html">https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-ec2-instance.html</a></p>
+<p>My domain is registered at <a href="http://namecheap.com">namecheap.com</a> rather than AWS’s own Route53 thing, but let’s see if we can figure it out anyway.</p>
+<p>Step 1: get the ipv4 address of the instance (presumably the “public” one). From the ec2 console, that is: 54.174.17.155</p>
+<p>Step 2: go to <a href="https://console.aws.amazon.com/route53/">https://console.aws.amazon.com/route53/</a> and create a “hosted zone” for <code>mirrordescent.com</code>.</p>
+<p>Step 3: click “create record” button. I entered “chat” for the subdomain, pasted the ip address from step 1 in the “value” box, and left everything else at default values.</p>
+<p>Ok, now I think we need to do some setup  to tell namecheap about AWS. At the bottom of this page: <a href="https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/migrate-dns-domain-inactive.html">https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/migrate-dns-domain-inactive.html</a> it tells me some info about setting up the name servers.</p>
+<p>Step 1 : find the “hosted zone” name servers. On the Route53 console these are listed as:<br>
+<a href="http://ns-586.awsdns-09.net">ns-586.awsdns-09.net</a><br>
+<a href="http://ns-86.awsdns-10.com">ns-86.awsdns-10.com</a><br>
+<a href="http://ns-1198.awsdns-21.org">ns-1198.awsdns-21.org</a><br>
+<a href="http://ns-1825.awsdns-36.co.uk">ns-1825.awsdns-36.co.uk</a></p>
+<p>Step 2: Go to <a href="http://namecheap.com">namecheap.com</a> and setup “custom DNS” for the domain <a href="http://mirrordescent.com">mirrordescent.com</a> and paste in the four name servers found in step 1.</p>
+<p>Ok, let’s test.</p>
+<p>I notice that it works fine to do <code>ssh ubuntu@54.174.17.155</code>.<br>
+So, I tried <code>ssh ubuntu@mirrordescent.com</code>. :</p>
+<pre><code>ssh ubuntu@mirrordescent.com
+ssh: Could not resolve hostname mirrordescent.com: nodename nor servname provided, or not known
+</code></pre>
+<p>I noticed from <a href="https://www.namecheap.com/support/knowledgebase/article.aspx/10371/2208/how-do-i-link-my-domain-to-amazon-web-services/">https://www.namecheap.com/support/knowledgebase/article.aspx/10371/2208/how-do-i-link-my-domain-to-amazon-web-services/</a> that it may take up to 24 hours (!) for the name server change to take effect. That is hopefully an overestimate. It’s 4:24pm right now. Let’s come back in a bit and see if anything has changed.</p>
+<p>At 4:30pm I realized I was being dumb: I set up the instance to be “<a href="http://chat.mirrordescent.com">chat.mirrordescent.com</a>”, not “<a href="http://mirrordescent.com">mirrordescent.com</a>”. This time, <code>ssh ubuntu@chat.mirrordescent.com</code> works great!</p>
+<h2 id="setting-up-the-ssl-certs.">Setting up the SSL certs.</h2>
+<p>The failure message from the install said to run <code>dpkg-reconfigure mattermost-omnibus</code> to try again. Let’s do that. First time it complains that we need to be root. Not a problem: <code>sudo dpkg-reconfigure mattermost-omnibus</code>.</p>
+<p>It asks for the domain name and email again and it’s already populated with what I gave last time. So,  let’s hit enter and see how it goes.</p>
+<pre class=" language-bash"><code class="prism  language-bash">  Installation successful<span class="token operator">!</span> Join the Mattermost community <span class="token keyword">for</span> questions
+  and help: https://mattermost.com/pl/default-ask-mattermost-community/
+</code></pre>
+<p><a href="https://app.warp.dev/block/qXDA0OTiz1UyDyK1vAtF9C">https://app.warp.dev/block/qXDA0OTiz1UyDyK1vAtF9C</a></p>
+<p>Success!</p>
+<h2 id="step-3">Step 3</h2>
+<p>I go to <code>chat.mattermost.com</code> and it prompts me to make an account. Cool! Now I have to make a team, so let’s make <code>chat.mattermost.com/aclab</code>.</p>
+<p>That works too. Wait a minute, can  just anyone off the street make a team? That’s no good. We’ll be sending spam before you know it.</p>
+<p>After a bit of looking, it seems like everything is actually ok: This document <a href="https://docs.mattermost.com/messaging/cloud-user-management.html">https://docs.mattermost.com/messaging/cloud-user-management.html</a>, says that the <em>first</em> user created is a special admin user. Indeed, trying to go back in a new browser window to make another user does not work.</p>
+<p>Seem like we  are up and running!</p>
+<h2 id="migrating-from-slack-the-real-pain-begins">Migrating from Slack (The real pain begins)</h2>
+<p>Mattermost has a guide for migrating: <a href="https://docs.mattermost.com/onboard/migrating-to-mattermost.html#migrate-from-slack">https://docs.mattermost.com/onboard/migrating-to-mattermost.html#migrate-from-slack</a></p>
+<p>Looks like the first step is to generate a slack export. Slack won’t let me export DMs without buying anything, and it also will only let me export the visible  history anyway rather than all the messages hidden by the paywall. So, I’ll pay slack for one month so that we can generate an export. Amazingly, we have to buy not the lowest paid tier but the “Business+” plan to do this, for around $120. I guess they know why I’m buying it…</p>
+<p>Following the mattermost guide, I created a bot for exporting some additional info that apparently the slack export still doesn’t give me…</p>
+<p>I ran steps 1-3 on my local macbook. The “slack-advanced-exporter” tool ran into an annoying issue in which my mac didn’t want to let me run it since it was not from a signed developer. So, I had to go into finder, right click, and hit “open” and click past a pop-up saying it might be malware. Then it opened a terminal window and of course immediately failed since no arguments were provided. However, now it was flagged as an exception to the security policy so I could run it from my original terminal window as described in the guide.</p>
+<p>Then, I transfered the resulting export file to the AWS instance: <code>scp export-with-emails-and-attachments.zip ubuntu@chat.mirrordescent.com:</code><br>
+It was surprisingly big (500 MB)!</p>
+<p>Probably a lot of this is me re-posting lecture slides when the history limiter hid them…</p>
+<p>Next, for step 4 I went back to the instance and ran <code>wget https://github.com/mattermost/mmetl/releases/download/v0.1.1/linux_amd64.tar.gz</code><br>
+which ran just fine (<a href="https://app.warp.dev/block/33ajgPn5PpgZRBVqzHrwa8">https://app.warp.dev/block/33ajgPn5PpgZRBVqzHrwa8</a>)</p>
+<p>Then, I happen to have memorized the command for unzipping tarballs: <code>tar -xvf linux_amd64.tar.gz</code>.</p>
+<p>Now we can run <code>./mmetl transform slack --team cutkoskylab --file export-with-emails-and-attachments.zip --output mattermost_import.jsonl</code><br>
+The guide was ambigious whether <code>--team</code> should refer to the slack team name or the mattermost team name. I guessed slack team name. If it doesn’t work, we can try mattermost team name (or I can just make a mattermost team with the same name as the slack team…)<br>
+Output here: <a href="https://app.warp.dev/block/TfgTObFM4dzas23pNdsNce">https://app.warp.dev/block/TfgTObFM4dzas23pNdsNce</a></p>
+<p>Next, we are told to do</p>
+<pre class=" language-bash"><code class="prism  language-bash"><span class="token function">mkdir</span> data
+<span class="token function">mv</span> bulk-export-attachments data
+<span class="token function">zip</span> -r mattermost-bulk-import.zip data mattermost_import.jsonl
+</code></pre>
+<p>But <code>data</code> already exists and has a <code>bulk-export-attachments</code> inside it. So, probably the <code>mmetl</code> tools has just been updated to do the first two commands for you. So I just only ran the last command (after doing <code>sudo apt install zip</code>)</p>
+<p>The next command had an issue:</p>
+<pre class=" language-bash"><code class="prism  language-bash">mmctl <span class="token function">import</span> upload ./mattermost-bulk-import.zip
+Error: cannot <span class="token function">read</span> user credentials, maybe you need to use login first: <span class="token function">stat</span> /home/ubuntu/.config/mmctl/config: no such <span class="token function">file</span> or directory
+</code></pre>
+<p>Ok, somehow we need to “login” for the <code>mmctl</code> tool… or do we?  <a href="https://docs.mattermost.com/manage/mmctl-command-line-tool.html">https://docs.mattermost.com/manage/mmctl-command-line-tool.html</a> suggest that we can just use the <code>--local</code> option since we are directly working on the instance with the mattermost install. So let’s try again:</p>
+<p><code>Error: failed to create upload session: : Unable to upload file. File is too large.,</code></p>
+<p>Uh oh…</p>
+<p>Dumping the error into google yields this page: <a href="https://github.com/mattermost/mattermost-server/issues/19042">https://github.com/mattermost/mattermost-server/issues/19042</a></p>
+<p>Looks like we need to change a max file size setting in some config. So, let’s run<br>
+<code>sudo mmctl --local config edit</code><br>
+I found a line:<br>
+<code>"FileMaxSizeMB": 100,</code><br>
+I increased this <code>1000</code> but it didn’t work. Feeling a bit foolish, I went back into the config and noticed:<br>
+<code>"MaxFileSize": 104857600,</code><br>
+I increased this to <code>104857600000</code></p>
+<p>Now we get the output:</p>
+<pre class=" language-bash"><code class="prism  language-bash"><span class="token function">sudo</span> mmctl --local <span class="token function">import</span> upload ./mattermost-bulk-import.zip
+Error: failed to upload data: <span class="token keyword">:</span> Unable to <span class="token function">write</span> the file., unable to create the directory /var/opt/mattermost/data/import <span class="token keyword">for</span> the <span class="token function">file</span> /var/opt/mattermost/data/import/rhq6a6iqbidujks4crabbqmf1r_mattermost-bulk-import.zip.tmp: <span class="token function">mkdir</span> /var/opt/mattermost/data: permission denied
+</code></pre>
+<p>What?? I’m root! How dare you tell me permission denied! Maybe it’s some weird shell issue. So, logged in with <code>sudo -i</code> and tried again, still an error. However, I can manually <code>mkdir /var/opt/mattermost/data/import</code> and chmod it to have all permissions, so I have no idea what it is complaining about…</p>
+<p>Ok well, when at a loss we can always try rebooting - at least that will presumably get those random services that are supposed to be restarted going properly.</p>
+<p>So I go the AWS console, go to the instance, select “actions-&gt;manage instance state”  and reboot the machine.</p>
+<p>Nope, no dice…</p>
+<p>Ok, actually what if this is not an actual <em>unix</em> permissions error but instead some kind of mattermost permissions error. Let’s try to solve the need for <code>--local</code> in the use of <code>mmct</code>. With a little debugging it looks like we can run:<br>
+<code>mmctl auth login https://chat.mirrordescent.com --name cutkoskylab</code><br>
+The <code>https://</code> is very important:  otherwise you get weird errors like:</p>
+<pre class=" language-bash"><code class="prism  language-bash">mmctl auth login chat.mirrordescent.com --name cutkoskylab
+Username: ashok
+Password:
+Error: could not initiate client: Post <span class="token string">"chat.mirrordescent.com/api/v4/users/login"</span><span class="token keyword">:</span> unsupported protocol scheme <span class="token string">""</span>
+</code></pre>
+<p>which took me a while to figure out.</p>
+<p>Anyway, now we get:</p>
+<pre class=" language-bash"><code class="prism  language-bash">mmctl <span class="token function">import</span> upload ./mattermost-bulk-import.zip
+Error: failed to upload data: AppErrorFromJSON: model.utils.decode_json.app_error, body: <span class="token operator">&lt;</span>html<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>head<span class="token operator">&gt;</span><span class="token operator">&lt;</span>title<span class="token operator">&gt;</span>413 Request Entity Too Large<span class="token operator">&lt;</span>/title<span class="token operator">&gt;</span><span class="token operator">&lt;</span>/head<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>body<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>center<span class="token operator">&gt;</span><span class="token operator">&lt;</span>h1<span class="token operator">&gt;</span>413 Request Entity Too Large<span class="token operator">&lt;</span>/h1<span class="token operator">&gt;</span><span class="token operator">&lt;</span>/center<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>hr<span class="token operator">&gt;</span><span class="token operator">&lt;</span>center<span class="token operator">&gt;</span>nginx/1.24.0<span class="token operator">&lt;</span>/center<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>/body<span class="token operator">&gt;</span>
+<span class="token operator">&lt;</span>/html<span class="token operator">&gt;</span>
+</code></pre>
+<p>So, a different error! Progress! Still complaining about file sizes…<br>
+Googleing the error yields: <a href="https://forum.mattermost.com/t/bulk-import-error-from-slack/13739">https://forum.mattermost.com/t/bulk-import-error-from-slack/13739</a> which suggest we run the command:</p>
+<pre class=" language-bash"><code class="prism  language-bash"><span class="token function">sudo</span> <span class="token function">sed</span> -i -e <span class="token string">'s/50M/4G/'</span> /etc/nginx/conf.d/mattermost.conf
+<span class="token function">sudo</span> systemctl reload nginx
+</code></pre>
+<p>Ok, let’s try again:</p>
+<pre><code>mmctl import upload ./mattermost-bulk-import.zip
+Error: failed to upload data: : Unable to write the file., unable to create the directory /var/opt/mattermost/data/import for the file /var/opt/mattermost/data/import/hsj6e38ui7g59d6r91m8i6fsir_mattermost-bulk-import.zip.tmp: mkdir /var/opt/mattermost/data: permission denied
+</code></pre>
+<p>Hmm, why did this come back? Maybe the “different error” before was actually a <em>new</em> error stemming from not using the --local mode.</p>
+<p>After a bunch of messing around, I eventually just tried <code>sudo chmod 777 /var/opt/mattermost</code> in addition to the already <code>sudo chmod 777 /var/opt/mattermost/data</code> and <code>sudo chmod 777 /var/opt/mattermost/data/import</code> which I had tried before. This worked:</p>
+<pre><code>sudo mmctl import upload ./mattermost-bulk-import.zip
+Upload session successfully created, ID: 1sj166ubufnxtgjf757rrf4sdc
+Import file successfully uploaded, name: b5nwnunfzbrcpczxbwgjuto8er
+</code></pre>
+<p>Why <code>sudo -i</code> wasn’t enough is beyond me. I can only guess that <code>mmctl</code> is internally doing something with a different user or something (maybe the user <code>mattermost</code>or something.) Anyway, the security implications here are for another day.</p>
+<p>The next couple lines of the guide went with no errors…</p>
+<p>but now we are at the end of the guide, and nothing seems to have changed  in the mattermost team! I cannot see any imported channels!</p>
+<p>After retrying a bunch of times and googling around (based mostly on observing bunch of errors about file attachments in the logs, which you can see with <code>sudo mmomni tail</code>), I gave up and ate some dinner.</p>
+<h2 id="actually-everything-was-mostly-fine">Actually, everything was mostly fine</h2>
+<p>Coming back to the problem, I went into the “system console” available to the admin user and found that there appear to be a bunch of channels and users and messages! But somehow I couldn’t see them in the chat interface?</p>
+<p>After a bit of messing around, I realized that actually everything had been imported, but my admin user was just not invited to any channels! How lonely.</p>
+<p>So, I used the admin ability to reset the password for the imported <a href="mailto:%22cutkosky@bu.edu">"cutkosky@bu.edu</a>" username, and logged in again as that id. All the channels were there! However, my DMs were not… and I just paid $120 to get those DMS!</p>
+<p>It turns out that you need to fill out some intimidating legal form to actually download the DMs from slack. So I filled out, and deleted the teams (with <code>mmctl team delete</code> and now we’re trying again).</p>
+<p>For reference, the commands were :</p>
+<pre><code>sudo mmctl --local team delete cutkoskylab
+mmctl auth login https://chat.mirrordescent.com --name cutkoskylab
+./mmetl transform slack --team cutkoskylab --file export-with-emails-and-attachments.zip --output mattermost_import.jsonl
+zip -r mattermost-bulk-import.zip data mattermost_import.jsonl
+mmctl import upload ./mattermost-bulk-import.zip
+mmctl import list available
+mmctl import process 4fxh5rjmpbfgpjrxtojpdoycdy_mattermost-bulk-import.zip
+</code></pre>
+<p>Oh no, a different error:</p>
+<pre><code>mmctl import job show newmmua5k3rymczn77w79y6two --json
+[
+  {
+    "id": "newmmua5k3rymczn77w79y6two",
+    "type": "import_process",
+    "priority": 0,
+    "create_at": 1683516436077,
+    "start_at": 1683516446964,
+    "last_activity_at": 1683516448672,
+    "status": "error",
+    "progress": -1,
+    "data": {
+      "error": "Error during job execution. — importUser: An account with that email already exists., invalid input: entity: User field: email value: cutkosky@bu.edu",
+      "import_file": "4fxh5rjmpbfgpjrxtojpdoycdy_mattermost-bulk-import.zip",
+      "line_number": "22"
+    }
+  }
+]
+</code></pre>
+<p>I guess deleting the team was not enough, we have to manually delete the users? Probably there is a workaround, but for our purposes I’d be ok with just completely reinstalling Mattermost if necessary, so let’s go ahead and delete the users.</p>
+<pre><code>mmctl user list
+
+...list of user info...
+
+There are 24 users on https://chat.mirrordescent.com/
+</code></pre>
+<p>I just manually ran a <code>sudo mmctl --local user delete</code> for user listed above (needed the <code>sudo</code> since otherwise I got a permissions error).</p>
+<p>This time the importing process seems to take a long time:</p>
+<pre><code>mmctl import job show 8wmbytdez3r1udhzok3d9q381e --json
+[
+  {
+    "id": "8wmbytdez3r1udhzok3d9q381e",
+    "type": "import_process",
+    "priority": 0,
+    "create_at": 1683516910167,
+    "start_at": 1683516912001,
+    "last_activity_at": 1683516912001,
+    "status": "in_progress",
+    "progress": 0,
+    "data": {
+      "import_file": "4fxh5rjmpbfgpjrxtojpdoycdy_mattermost-bulk-import.zip"
+    }
+  }
+]
+</code></pre>
+<p>But eventually, we have:</p>
+<pre><code>mmctl import job show 8wmbytdez3r1udhzok3d9q381e --json
+[
+  {
+    "id": "8wmbytdez3r1udhzok3d9q381e",
+    "type": "import_process",
+    "priority": 0,
+    "create_at": 1683516910167,
+    "start_at": 1683516912001,
+    "last_activity_at": 1683517461959,
+    "status": "success",
+    "progress": 100,
+    "data": {
+      "import_file": "4fxh5rjmpbfgpjrxtojpdoycdy_mattermost-bulk-import.zip"
+    }
+  }
+]
+</code></pre>
+<p>And logging in to the instance, I see all the DMs! Success at long last!</p>
+</div>
+</body>
+
+</html>
